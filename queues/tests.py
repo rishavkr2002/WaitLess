@@ -200,3 +200,25 @@ class QueueAPITests(APITestCase):
         self.assertEqual(response.data["no_show"], 1)
         self.assertEqual(response.data["total_customers"], 6)
         self.assertEqual(response.data["estimated_wait_minutes"], 10)
+
+    def test_queue_customer_list(self):
+        self.create_token(2, "Customer Two")
+        self.create_token(1, "Customer One")
+
+        response = self.client.get(
+            reverse("queue-customers", kwargs={"queue_id": self.queue.id})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["queue_id"], self.queue.id)
+        self.assertEqual(response.data["queue_name"], "Test Queue")
+        self.assertEqual(response.data["total_customers"], 2)
+
+        customers = response.data["customers"]
+
+        self.assertEqual(len(customers), 2)
+        self.assertEqual(customers[0]["token_number"], 1)
+        self.assertEqual(customers[0]["customer_name"], "Customer One")
+        self.assertEqual(customers[0]["status"], Token.Status.WAITING)
+        self.assertEqual(customers[1]["token_number"], 2)
+        self.assertEqual(customers[1]["customer_name"], "Customer Two")
