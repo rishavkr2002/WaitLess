@@ -1,6 +1,6 @@
 
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Max, Count, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -34,6 +34,76 @@ class QueueListAPIView(generics.ListAPIView):
                 service__organization__is_active=True,
             )
             .select_related("service", "service__organization")
+        )
+
+
+class QueueDashboardAPIView(APIView):
+    """Provide a summary of customers and status counts for a queue."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, queue_id):
+        queue = get_object_or_404(
+            Queue.objects.select_related(
+                "service",
+                "service__organization",
+            ),
+            pk=queue_id,
+            is_active=True,
+            service__is_active=True,
+            service__organization__is_active=True,
+        )
+
+        counts = Token.objects.filter(queue=queue).aggregate(
+            waiting=Count(
+                "id",
+                filter=Q(status=Token.Status.WAITING),
+            ),
+            called=Count(
+                "id",
+                filter=Q(status=Token.Status.CALLED),
+            ),
+            serving=Count(
+                "id",
+                filter=Q(status=Token.Status.SERVING),
+            ),
+            completed=Count(
+                "id",
+                filter=Q(status=Token.Status.COMPLETED),
+            ),
+            cancelled=Count(
+                "id",
+                filter=Q(status=Token.Status.CANCELLED),
+            ),
+            no_show=Count(
+                "id",
+                filter=Q(status=Token.Status.NO_SHOW),
+            ),
+        )
+
+        waiting_count = counts["waiting"]
+
+        return Response(
+            {
+                "queue_id": queue.id,
+                "queue_name": queue.name,
+                "service_name": queue.service.name,
+                "organization_name": queue.service.organization.name,
+                "is_active": queue.is_active,
+                "total_customers": sum(counts.values()),
+                "waiting": waiting_count,
+                "called": counts["called"],
+                "serving": counts["serving"],
+                "completed": counts["completed"],
+                "cancelled": counts["cancelled"],
+                "no_show": counts["no_show"],
+                "estimated_wait_minutes": (
+                    waiting_count
+                    * queue.service.average_service_time
+                ),
+                "checked_at": timezone.now(),
+            },
+            status=status.HTTP_200_OK,
         )
 
 
@@ -134,7 +204,8 @@ class TokenStatusAPIView(APIView):
         else:
             position = people_ahead + 1
             estimated_wait = (
-                people_ahead * token.queue.service.average_service_time
+                people_ahead
+                * token.queue.service.average_service_time
             )
 
         return Response(
