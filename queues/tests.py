@@ -222,3 +222,68 @@ class QueueAPITests(APITestCase):
         self.assertEqual(customers[0]["status"], Token.Status.WAITING)
         self.assertEqual(customers[1]["token_number"], 2)
         self.assertEqual(customers[1]["customer_name"], "Customer Two")
+
+    # NEW TEST 1: Search queues by name
+    def test_search_queues_by_name(self):
+        response = self.client.get(
+            reverse("queue-list"),
+            {"search": "Test"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["name"], "Test Queue")
+
+    # NEW TEST 2: Filter queues by service ID
+    def test_filter_queues_by_service(self):
+        another_service = Service.objects.create(
+            organization=self.organization,
+            name="Another Service",
+            average_service_time=15,
+            is_active=True,
+        )
+
+        another_queue = Queue.objects.create(
+            service=another_service,
+            name="Another Queue",
+            is_active=True,
+        )
+
+        response = self.client.get(
+            reverse("queue-list"),
+            {"service": another_service.id},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], another_queue.id)
+
+    # NEW TEST 3: Filter queues by organization ID
+    def test_filter_queues_by_organization(self):
+        another_organization = Organization.objects.create(
+            name="Another Organization",
+            is_active=True,
+        )
+
+        another_service = Service.objects.create(
+            organization=another_organization,
+            name="Another Organization Service",
+            average_service_time=15,
+            is_active=True,
+        )
+
+        another_queue = Queue.objects.create(
+            service=another_service,
+            name="Another Organization Queue",
+            is_active=True,
+        )
+
+        response = self.client.get(
+            reverse("queue-list"),
+            {"organization": another_organization.id},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], another_queue.id)
+

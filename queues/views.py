@@ -21,20 +21,34 @@ ACTIVE_STATUSES = [
 
 
 class QueueListAPIView(generics.ListAPIView):
-    """List all active queues."""
+    """List active queues with optional search and filters."""
 
     serializer_class = QueueSerializer
     permission_classes = [AllowAny]
 
     def get_queryset(self):
-        return (
-            Queue.objects.filter(
-                is_active=True,
-                service__is_active=True,
-                service__organization__is_active=True,
+        queryset = Queue.objects.filter(
+            is_active=True,
+            service__is_active=True,
+            service__organization__is_active=True,
+        ).select_related("service", "service__organization")
+
+        search = self.request.query_params.get("search", "").strip()
+        service_id = self.request.query_params.get("service")
+        organization_id = self.request.query_params.get("organization")
+
+        if search:
+            queryset = queryset.filter(name__icontains=search)
+
+        if service_id:
+            queryset = queryset.filter(service_id=service_id)
+
+        if organization_id:
+            queryset = queryset.filter(
+                service__organization_id=organization_id
             )
-            .select_related("service", "service__organization")
-        )
+
+        return queryset
 
 
 class QueueDashboardAPIView(APIView):
@@ -45,8 +59,7 @@ class QueueDashboardAPIView(APIView):
     def get(self, request, queue_id):
         queue = get_object_or_404(
             Queue.objects.select_related(
-                "service",
-                "service__organization",
+                "service", "service__organization"
             ),
             pk=queue_id,
             is_active=True,
@@ -95,7 +108,9 @@ class QueueCustomerListAPIView(APIView):
 
     def get(self, request, queue_id):
         queue = get_object_or_404(
-            Queue.objects.select_related("service", "service__organization"),
+            Queue.objects.select_related(
+                "service", "service__organization"
+            ),
             pk=queue_id,
             is_active=True,
             service__is_active=True,
