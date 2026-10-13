@@ -1,6 +1,6 @@
 
 from django.db import transaction
-from django.db.models import Max, Q
+from django.db.models import Max
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -22,18 +22,25 @@ ACTIVE_STATUSES = [
 
 
 class QueueListAPIView(generics.ListAPIView):
+    """List all active queues."""
+
     serializer_class = QueueSerializer
     permission_classes = [AllowAny]
 
     def get_queryset(self):
-        return Queue.objects.filter(
-            is_active=True,
-            service__is_active=True,
-            service__organization__is_active=True,
-        ).select_related("service", "service__organization")
+        return (
+            Queue.objects.filter(
+                is_active=True,
+                service__is_active=True,
+                service__organization__is_active=True,
+            )
+            .select_related("service", "service__organization")
+        )
 
 
 class JoinQueueAPIView(APIView):
+    """Allow a customer to join an active queue."""
+
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -67,16 +74,12 @@ class JoinQueueAPIView(APIView):
         )
 
         with transaction.atomic():
-            # Lock the queue row while allocating a token.
-            # SQLite does not provide the same row-level locking
-            # as PostgreSQL, so use PostgreSQL for production.
-            locked_queue = Queue.objects.select_for_update().get(
-                pk=queue.pk
-            )
+            locked_queue = Queue.objects.select_for_update().get(pk=queue.pk)
 
             last_number = (
-                Token.objects.filter(queue=locked_queue)
-                .aggregate(max_number=Max("token_number"))["max_number"]
+                Token.objects.filter(queue=locked_queue).aggregate(
+                    max_number=Max("token_number")
+                )["max_number"]
                 or 0
             )
 
@@ -94,22 +97,23 @@ class JoinQueueAPIView(APIView):
 
 
 class TokenStatusAPIView(APIView):
+    """Check token status and estimated waiting time using its UUID."""
+
     permission_classes = [AllowAny]
 
-    def get(self, request, token_id):
+    def get(self, request, public_id):
         token = get_object_or_404(
-            Token.objects.select_related("queue", "queue__service"),
-            pk=token_id,
+            Token.objects.select_related(
+                "queue",
+                "queue__service",
+            ),
+            public_id=public_id,
         )
 
-        ahead = Token.objects.filter(
+        people_ahead = Token.objects.filter(
             queue=token.queue,
             token_number__lt=token.token_number,
-            status__in=[
-                Token.Status.WAITING,
-                Token.Status.CALLED,
-                Token.Status.SERVING,
-            ],
+            status__in=ACTIVE_STATUSES,
         ).count()
 
         if token.status in [
@@ -120,31 +124,38 @@ class TokenStatusAPIView(APIView):
             position = None
             estimated_wait = 0
         else:
-            position = ahead + 1
-            service_minutes = token.queue.service.average_service_time
-            estimated_wait = ahead * service_minutes
+            position = people_ahead + 1
+            estimated_wait = (
+                people_ahead
+                * token.queue.service.average_service_time
+            )
 
-        return Response({
-            "token_id": token.id,
-            "token_number": token.token_number,
-            "customer_name": token.customer_name,
-            "queue": token.queue.name,
-            "status": token.status,
-            "people_ahead": ahead,
-            "position": position,
-            "estimated_wait_minutes": estimated_wait,
-            "checked_at": timezone.now(),
-        })
+        return Response(
+            {
+                "public_id": str(token.public_id),
+                "token_number": token.token_number,
+                "customer_name": token.customer_name,
+                "queue": token.queue.name,
+                "status": token.status,
+                "people_ahead": people_ahead,
+                "position": position,
+                "estimated_wait_minutes": estimated_wait,
+                "checked_at": timezone.now(),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class CancelTokenAPIView(APIView):
+    """Cancel a waiting token using its UUID."""
+
     permission_classes = [AllowAny]
 
-    def post(self, request, token_id):
+    def post(self, request, public_id):
         with transaction.atomic():
             token = get_object_or_404(
                 Token.objects.select_for_update(),
-                pk=token_id,
+                public_id=public_id,
             )
 
             if token.status != Token.Status.WAITING:
@@ -163,7 +174,7 @@ class CancelTokenAPIView(APIView):
         return Response(
             {
                 "message": "Token cancelled successfully.",
-                "token_id": token.id,
+                "public_id": str(token.public_id),
                 "status": token.status,
             },
             status=status.HTTP_200_OK,

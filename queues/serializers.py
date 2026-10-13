@@ -1,5 +1,6 @@
 
 from rest_framework import serializers
+
 from .models import Queue, Token
 
 
@@ -24,7 +25,10 @@ class QueueSerializer(serializers.ModelSerializer):
             "is_active",
             "created_at",
         ]
-        read_only_fields = ["id", "created_at"]
+        read_only_fields = [
+            "id",
+            "created_at",
+        ]
 
 
 class TokenSerializer(serializers.ModelSerializer):
@@ -36,7 +40,7 @@ class TokenSerializer(serializers.ModelSerializer):
     class Meta:
         model = Token
         fields = [
-            "id",
+            "public_id",
             "queue",
             "queue_name",
             "token_number",
@@ -45,7 +49,7 @@ class TokenSerializer(serializers.ModelSerializer):
             "joined_at",
         ]
         read_only_fields = [
-            "id",
+            "public_id",
             "token_number",
             "status",
             "joined_at",

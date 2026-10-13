@@ -1,4 +1,6 @@
 
+import uuid
+
 from django.db import models
 from organizations.models import Service
 
@@ -27,6 +29,7 @@ class Queue(models.Model):
 
 
 class Token(models.Model):
+
     class Status(models.TextChoices):
         WAITING = "WAITING", "Waiting"
         CALLED = "CALLED", "Called"
@@ -34,6 +37,12 @@ class Token(models.Model):
         COMPLETED = "COMPLETED", "Completed"
         CANCELLED = "CANCELLED", "Cancelled"
         NO_SHOW = "NO_SHOW", "No Show"
+
+    public_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False,
+    )
 
     queue = models.ForeignKey(
         Queue,
