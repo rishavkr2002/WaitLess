@@ -6,6 +6,7 @@ from .views import (
     CancelTokenAPIView,
     CompleteServiceAPIView,
     JoinQueueAPIView,
+    QueueCustomerListAPIView,
     QueueDashboardAPIView,
     QueueListAPIView,
     StartServiceAPIView,
@@ -13,21 +14,20 @@ from .views import (
 )
 
 urlpatterns = [
-    path(
-        "",
-        QueueListAPIView.as_view(),
-        name="queue-list",
-    ),
-    path(
-        "join/",
-        JoinQueueAPIView.as_view(),
-        name="queue-join",
-    ),
+    path("", QueueListAPIView.as_view(), name="queue-list"),
+    path("join/", JoinQueueAPIView.as_view(), name="queue-join"),
+
     path(
         "dashboard/<int:queue_id>/",
         QueueDashboardAPIView.as_view(),
         name="queue-dashboard",
     ),
+    path(
+        "<int:queue_id>/customers/",
+        QueueCustomerListAPIView.as_view(),
+        name="queue-customers",
+    ),
+
     path(
         "tokens/<uuid:public_id>/",
         TokenStatusAPIView.as_view(),
