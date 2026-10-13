@@ -10,7 +10,7 @@ from queues.models import Queue, Token
 class QueueAPITests(APITestCase):
 
     def setUp(self):
-        # Create test organization
+        # Create a temporary organization for testing
         self.organization = Organization.objects.create(
             name="Test Organization",
             description="Organization for automated tests",
@@ -18,7 +18,7 @@ class QueueAPITests(APITestCase):
             is_active=True,
         )
 
-        # Create test service
+        # Create a temporary service
         self.service = Service.objects.create(
             organization=self.organization,
             name="Test Service",
@@ -26,14 +26,19 @@ class QueueAPITests(APITestCase):
             is_active=True,
         )
 
-        # Create test queue
+        # Create a temporary queue
         self.queue = Queue.objects.create(
             service=self.service,
             name="Test Queue",
             is_active=True,
         )
 
-    def create_token(self, number, name, token_status=Token.Status.WAITING):
+    def create_token(
+        self,
+        number,
+        name,
+        token_status=Token.Status.WAITING,
+    ):
         """Create a token for testing."""
         return Token.objects.create(
             queue=self.queue,
@@ -45,7 +50,10 @@ class QueueAPITests(APITestCase):
     def test_list_active_queues(self):
         response = self.client.get(reverse("queue-list"))
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["name"], "Test Queue")
 
@@ -59,9 +67,15 @@ class QueueAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
         self.assertEqual(response.data["token_number"], 1)
-        self.assertEqual(response.data["customer_name"], "Customer One")
+        self.assertEqual(
+            response.data["customer_name"],
+            "Customer One",
+        )
         self.assertIn("public_id", response.data)
 
     def test_token_numbers_increase(self):
@@ -83,44 +97,65 @@ class QueueAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(first_response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(second_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            first_response.status_code,
+            status.HTTP_201_CREATED,
+        )
+        self.assertEqual(
+            second_response.status_code,
+            status.HTTP_201_CREATED,
+        )
         self.assertEqual(first_response.data["token_number"], 1)
         self.assertEqual(second_response.data["token_number"], 2)
 
     def test_token_status_and_waiting_time(self):
-        first_token = self.create_token(1, "Customer One")
+        self.create_token(1, "Customer One")
         my_token = self.create_token(2, "Customer Two")
 
-        url = reverse(
-            "token-status",
-            kwargs={"public_id": my_token.public_id},
+        response = self.client.get(
+            reverse(
+                "token-status",
+                kwargs={"public_id": my_token.public_id},
+            )
         )
 
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["public_id"], str(my_token.public_id))
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(
+            response.data["public_id"],
+            str(my_token.public_id),
+        )
         self.assertEqual(response.data["token_number"], 2)
         self.assertEqual(response.data["people_ahead"], 1)
         self.assertEqual(response.data["position"], 2)
-        self.assertEqual(response.data["estimated_wait_minutes"], 10)
+        self.assertEqual(
+            response.data["estimated_wait_minutes"],
+            10,
+        )
 
     def test_cancel_waiting_token(self):
         token = self.create_token(1, "Customer One")
 
-        url = reverse(
-            "token-cancel",
-            kwargs={"public_id": token.public_id},
+        response = self.client.post(
+            reverse(
+                "token-cancel",
+                kwargs={"public_id": token.public_id},
+            )
         )
 
-        response = self.client.post(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
 
         token.refresh_from_db()
         self.assertEqual(token.status, Token.Status.CANCELLED)
-        self.assertEqual(response.data["status"], Token.Status.CANCELLED)
+        self.assertEqual(
+            response.data["status"],
+            Token.Status.CANCELLED,
+        )
 
     def test_cannot_cancel_serving_token(self):
         token = self.create_token(
@@ -129,14 +164,17 @@ class QueueAPITests(APITestCase):
             token_status=Token.Status.SERVING,
         )
 
-        url = reverse(
-            "token-cancel",
-            kwargs={"public_id": token.public_id},
+        response = self.client.post(
+            reverse(
+                "token-cancel",
+                kwargs={"public_id": token.public_id},
+            )
         )
 
-        response = self.client.post(url)
-
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
 
         token.refresh_from_db()
         self.assertEqual(token.status, Token.Status.SERVING)
@@ -148,7 +186,10 @@ class QueueAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
         self.assertIn("error", response.data)
 
     def test_inactive_queue_is_not_listed(self):
@@ -157,5 +198,82 @@ class QueueAPITests(APITestCase):
 
         response = self.client.get(reverse("queue-list"))
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
         self.assertEqual(len(response.data), 0)
+
+    def test_call_next_customer(self):
+        self.client.post(
+            reverse("queue-join"),
+            {
+                "queue": self.queue.id,
+                "customer_name": "Customer One",
+            },
+            format="json",
+        )
+
+        token = Token.objects.get(
+            queue=self.queue,
+            token_number=1,
+        )
+
+        response = self.client.post(
+            reverse(
+                "queue-call-next",
+                kwargs={"queue_id": self.queue.id},
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        token.refresh_from_db()
+        self.assertEqual(token.status, Token.Status.CALLED)
+
+    def test_start_service(self):
+        token = self.create_token(
+            1,
+            "Customer One",
+            token_status=Token.Status.CALLED,
+        )
+
+        response = self.client.post(
+            reverse(
+                "token-start-service",
+                kwargs={"public_id": token.public_id},
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        token.refresh_from_db()
+        self.assertEqual(token.status, Token.Status.SERVING)
+
+    def test_complete_service(self):
+        token = self.create_token(
+            1,
+            "Customer One",
+            token_status=Token.Status.SERVING,
+        )
+
+        response = self.client.post(
+            reverse(
+                "token-complete-service",
+                kwargs={"public_id": token.public_id},
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        token.refresh_from_db()
+        self.assertEqual(token.status, Token.Status.COMPLETED)

@@ -9,7 +9,6 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from organizations.models import Service
 from .models import Queue, Token
 from .serializers import QueueSerializer, TokenSerializer
 
@@ -44,8 +43,16 @@ class JoinQueueAPIView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        customer_name = request.data.get("customer_name", "").strip()
+        customer_name = request.data.get("customer_name", "")
         queue_id = request.data.get("queue")
+
+        if not isinstance(customer_name, str):
+            return Response(
+                {"error": "Customer name must be text."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        customer_name = customer_name.strip()
 
         if not customer_name:
             return Response(
@@ -74,12 +81,16 @@ class JoinQueueAPIView(APIView):
         )
 
         with transaction.atomic():
-            locked_queue = Queue.objects.select_for_update().get(pk=queue.pk)
+            locked_queue = Queue.objects.select_for_update().get(
+                pk=queue.pk,
+                is_active=True,
+                service__is_active=True,
+                service__organization__is_active=True,
+            )
 
             last_number = (
-                Token.objects.filter(queue=locked_queue).aggregate(
-                    max_number=Max("token_number")
-                )["max_number"]
+                Token.objects.filter(queue=locked_queue)
+                .aggregate(max_number=Max("token_number"))["max_number"]
                 or 0
             )
 
@@ -103,10 +114,7 @@ class TokenStatusAPIView(APIView):
 
     def get(self, request, public_id):
         token = get_object_or_404(
-            Token.objects.select_related(
-                "queue",
-                "queue__service",
-            ),
+            Token.objects.select_related("queue", "queue__service"),
             public_id=public_id,
         )
 
@@ -126,8 +134,7 @@ class TokenStatusAPIView(APIView):
         else:
             position = people_ahead + 1
             estimated_wait = (
-                people_ahead
-                * token.queue.service.average_service_time
+                people_ahead * token.queue.service.average_service_time
             )
 
         return Response(
@@ -160,11 +167,7 @@ class CancelTokenAPIView(APIView):
 
             if token.status != Token.Status.WAITING:
                 return Response(
-                    {
-                        "error": (
-                            "Only waiting tokens can be cancelled."
-                        )
-                    },
+                    {"error": "Only waiting tokens can be cancelled."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -175,6 +178,116 @@ class CancelTokenAPIView(APIView):
             {
                 "message": "Token cancelled successfully.",
                 "public_id": str(token.public_id),
+                "status": token.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class CallNextCustomerAPIView(APIView):
+    """Call the next waiting customer in a queue."""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, queue_id):
+        with transaction.atomic():
+            queue = get_object_or_404(
+                Queue.objects.select_for_update(),
+                pk=queue_id,
+                is_active=True,
+                service__is_active=True,
+                service__organization__is_active=True,
+            )
+
+            token = (
+                Token.objects.select_for_update()
+                .filter(
+                    queue=queue,
+                    status=Token.Status.WAITING,
+                )
+                .order_by("token_number")
+                .first()
+            )
+
+            if token is None:
+                return Response(
+                    {"error": "No waiting customers in this queue."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            token.status = Token.Status.CALLED
+            token.save(update_fields=["status"])
+
+        return Response(
+            {
+                "message": "Next customer called successfully.",
+                "public_id": str(token.public_id),
+                "token_number": token.token_number,
+                "customer_name": token.customer_name,
+                "status": token.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class StartServiceAPIView(APIView):
+    """Start service for a customer whose token has been called."""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, public_id):
+        with transaction.atomic():
+            token = get_object_or_404(
+                Token.objects.select_for_update(),
+                public_id=public_id,
+            )
+
+            if token.status != Token.Status.CALLED:
+                return Response(
+                    {"error": "Only called tokens can start service."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            token.status = Token.Status.SERVING
+            token.save(update_fields=["status"])
+
+        return Response(
+            {
+                "message": "Service started successfully.",
+                "public_id": str(token.public_id),
+                "token_number": token.token_number,
+                "status": token.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class CompleteServiceAPIView(APIView):
+    """Complete service for a customer currently being served."""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, public_id):
+        with transaction.atomic():
+            token = get_object_or_404(
+                Token.objects.select_for_update(),
+                public_id=public_id,
+            )
+
+            if token.status != Token.Status.SERVING:
+                return Response(
+                    {"error": "Only serving tokens can be completed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            token.status = Token.Status.COMPLETED
+            token.save(update_fields=["status"])
+
+        return Response(
+            {
+                "message": "Service completed successfully.",
+                "public_id": str(token.public_id),
+                "token_number": token.token_number,
                 "status": token.status,
             },
             status=status.HTTP_200_OK,
